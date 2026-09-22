@@ -1,9 +1,263 @@
-const firebaseConfig = {
-    apiKey: "AIzaSyAZDG_PW5eAnJS9hbE2Jo_iVNba82ci6M0",
-    authDomain: "speedcam-dd43f.firebaseapp.com",
-    databaseURL: "https://speedcam-dd43f-default-rtdb.firebaseio.com/",
-    projectId: "speedcam-dd43f",
-    storageBucket: "speedcam-dd43f.firebasestorage.app",
-    messagingSenderId: "685303102381",
-    appId: "1:685303102381:web:da8a36e4dac3cb282f3f24"
-};
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Drive & Speed Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+</head>
+<body class="bg-slate-900 text-white font-sans min-h-screen flex flex-col">
+
+    <header class="bg-slate-800 p-4 shadow-md flex justify-between items-center">
+        <h1 class="text-xl font-bold flex items-center gap-2">🚗 Live Drive Tracker</h1>
+        <div id="role-badge" class="px-3 py-1 rounded-full text-xs font-semibold bg-blue-600">Select Mode</div>
+    </header>
+
+    <div id="mode-select-screen" class="flex-1 flex flex-col items-center justify-center p-6 text-center">
+        <div class="max-w-md w-full bg-slate-800 p-8 rounded-2xl shadow-xl border border-slate-700">
+            <h2 class="text-2xl font-bold mb-4">Choose Your Role</h2>
+            <p class="text-slate-400 text-sm mb-6">Select how you want to use this link on this device.</p>
+            
+            <div class="space-y-4">
+                <button onclick="setRole('driver')" class="w-full py-4 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold text-lg transition shadow-lg">
+                    I am Driving (Driver View)
+                </button>
+                <button onclick="setRole('partner')" class="w-full py-4 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold text-lg transition shadow-lg">
+                    I am Watching (Partner Dashboard)
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="driver-view" class="hidden flex-1 flex flex-col p-4 max-w-md mx-auto w-full justify-center">
+        <div class="bg-slate-800 p-6 rounded-2xl shadow-xl text-center border border-slate-700 space-y-6">
+            <div>
+                <span class="text-slate-400 text-sm uppercase tracking-wider">Current Speed</span>
+                <div id="driver-speed" class="text-6xl font-black text-emerald-400 mt-2">0 <span class="text-2xl text-slate-400">km/h</span></div>
+            </div>
+
+            <div id="driver-warning" class="hidden p-3 bg-red-600/30 border border-red-500 rounded-xl text-red-400 font-bold animate-pulse">
+                ⚠️ Speed Limit Exceeded (> 80 km/h)!
+            </div>
+
+            <div class="grid grid-cols-2 gap-4 text-left">
+                <div class="bg-slate-900 p-3 rounded-xl">
+                    <span class="text-xs text-slate-400">Battery</span>
+                    <div id="driver-battery" class="text-lg font-semibold">--%</div>
+                </div>
+                <div class="bg-slate-900 p-3 rounded-xl">
+                    <span class="text-xs text-slate-400">GPS Status</span>
+                    <div id="driver-gps" class="text-lg font-semibold text-amber-400">Connecting...</div>
+                </div>
+            </div>
+
+            <button onclick="stopDriving()" class="w-full py-3 bg-red-600 hover:bg-red-500 rounded-xl font-bold transition">
+                Stop Sharing / End Trip
+            </button>
+        </div>
+    </div>
+
+    <div id="partner-view" class="hidden flex-1 flex flex-col p-4 max-w-4xl mx-auto w-full space-y-4">
+        <div id="partner-alert-banner" class="hidden bg-red-600 text-white p-4 rounded-xl font-bold text-center text-xl animate-bounce shadow-lg">
+            🚨 WARNING: Speed Limit (80 km/h) Exceeded!
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700 text-center">
+                <span class="text-xs text-slate-400">Speed</span>
+                <div id="partner-speed" class="text-2xl font-bold text-emerald-400">0 km/h</div>
+            </div>
+            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700 text-center">
+                <span class="text-xs text-slate-400">Battery</span>
+                <div id="partner-battery" class="text-2xl font-bold">--%</div>
+            </div>
+            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700 text-center">
+                <span class="text-xs text-slate-400">Max Speed (Trip)</span>
+                <div id="partner-maxspeed" class="text-2xl font-bold text-amber-400">0 km/h</div>
+            </div>
+            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700 text-center">
+                <span class="text-xs text-slate-400">Status</span>
+                <div id="partner-status" class="text-sm font-semibold text-slate-300 mt-1">Waiting for data...</div>
+            </div>
+        </div>
+
+        <div class="flex-1 bg-slate-800 rounded-2xl overflow-hidden border border-slate-700 min-h-[350px] relative">
+            <div id="map" class="w-full h-full min-h-[350px]"></div>
+        </div>
+    </div>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyAZDG_PW5eAnJS9hbE2Jo_iVNba82ci6M0",
+            authDomain: "speedcam-dd43f.firebaseapp.com",
+            databaseURL: "https://speedcam-dd43f-default-rtdb.firebaseio.com/",
+            projectId: "speedcam-dd43f",
+            storageBucket: "speedcam-dd43f.firebasestorage.app",
+            messagingSenderId: "685303102381",
+            appId: "1:685303102381:web:da8a36e4dac3cb282f3f24"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        let currentRole = null;
+        let watchId = null;
+        let map = null;
+        let marker = null;
+        let maxSpeedRecorded = 0;
+
+        function setRole(role) {
+            currentRole = role;
+            document.getElementById('mode-select-screen').classList.add('hidden');
+            document.getElementById('role-badge').innerText = role === 'driver' ? 'Driver Mode' : 'Partner Dashboard';
+
+            if (role === 'driver') {
+                document.getElementById('driver-view').classList.remove('hidden');
+                startDriverTracking();
+            } else {
+                document.getElementById('partner-view').classList.remove('hidden');
+                initMap();
+                listenToPartnerData();
+            }
+        }
+
+        function startDriverTracking() {
+            const gpsStatus = document.getElementById('driver-gps');
+            const speedEl = document.getElementById('driver-speed');
+            const warningEl = document.getElementById('driver-warning');
+            const batteryEl = document.getElementById('driver-battery');
+
+            if (navigator.getBattery) {
+                navigator.getBattery().then(battery => {
+                    updateBattery(battery);
+                    battery.addEventListener('levelchange', () => updateBattery(battery));
+                });
+            }
+
+            function updateBattery(bat) {
+                batteryEl.innerText = Math.round(bat.level * 100) + '%';
+            }
+
+            if (!navigator.geolocation) {
+                gpsStatus.innerText = "Geolocation not supported";
+                gpsStatus.className = "text-lg font-semibold text-red-500";
+                return;
+            }
+
+            gpsStatus.innerText = "Tracking active";
+            gpsStatus.className = "text-lg font-semibold text-emerald-400";
+
+            watchId = navigator.geolocation.watchPosition(
+                (position) => {
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    let speedKmh = position.coords.speed ? position.coords.speed * 3.6 : 0;
+                    if (speedKmh < 0) speedKmh = 0;
+
+                    const batteryText = batteryEl.innerText;
+
+                    speedEl.innerHTML = `${Math.round(speedKmh)} <span class="text-2xl text-slate-400">km/h</span>`;
+                    
+                    if (speedKmh > 80) {
+                        warningEl.classList.remove('hidden');
+                    } else {
+                        warningEl.classList.add('hidden');
+                    }
+
+                    db.ref('trip/live').set({
+                        lat: lat,
+                        lon: lon,
+                        speed: Math.round(speedKmh),
+                        battery: batteryText,
+                        timestamp: Date.now()
+                    });
+                },
+                (error) => {
+                    gpsStatus.innerText = "GPS Error: " + error.message;
+                    gpsStatus.className = "text-lg font-semibold text-red-500";
+                },
+                { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
+            );
+        }
+
+        function stopDriving() {
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+            }
+            db.ref('trip/live').remove();
+            alert("Trip ended.");
+            location.reload();
+        }
+
+        function initMap() {
+            map = L.map('map').setView([3.139, 101.686], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '© OpenStreetMap'
+            }).addTo(map);
+        }
+
+        function listenToPartnerData() {
+            const speedEl = document.getElementById('partner-speed');
+            const batteryEl = document.getElementById('partner-battery');
+            const maxSpeedEl = document.getElementById('partner-maxspeed');
+            const statusEl = document.getElementById('partner-status');
+            const alertBanner = document.getElementById('partner-alert-banner');
+
+            db.ref('trip/live').on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (!data) {
+                    statusEl.innerText = "Driver is offline / Trip ended";
+                    statusEl.className = "text-sm font-semibold text-red-400 mt-1";
+                    return;
+                }
+
+                statusEl.innerText = "Live Connected 🟢";
+                statusEl.className = "text-sm font-semibold text-emerald-400 mt-1";
+
+                speedEl.innerText = data.speed + " km/h";
+                batteryEl.innerText = data.battery;
+
+                if (data.speed > maxSpeedRecorded) {
+                    maxSpeedRecorded = data.speed;
+                    maxSpeedEl.innerText = maxSpeedRecorded + " km/h";
+                }
+
+                if (data.speed > 80) {
+                    alertBanner.classList.remove('hidden');
+                    playBeep();
+                } else {
+                    alertBanner.classList.add('hidden');
+                }
+
+                const latLng = [data.lat, data.lon];
+                if (!marker) {
+                    marker = L.marker(latLng).addTo(map);
+                } else {
+                    marker.setLatLng(latLng);
+                }
+                map.setView(latLng, 16);
+            });
+        }
+
+        function playBeep() {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = 600;
+                gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.2);
+            } catch (e) {}
+        }
+    </script>
+</body>
+</html>
